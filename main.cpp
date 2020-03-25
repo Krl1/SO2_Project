@@ -1,19 +1,16 @@
 #include <iostream>
 #include <thread>
-#include <fstream>
 #include <vector>
-#include <random>
-#include <unistd.h>
 #include <cstdlib>
-#include <time.h>
+#include <ctime>
 #include <string>
-#include <sstream>
-#include <semaphore.h>
-#include <cstddef>
 #include <mutex>
 #include <condition_variable>
+#include <ncurses.h>
 
 using namespace std;
+
+bool endFeast = false;
 
 struct Fork{
     Fork(){};
@@ -44,8 +41,7 @@ public:
     }
 
     void feast(vector<Fork> &forks, vector<condition_variable> &cVariables){
-        int i=0;
-        while(i<1000){
+        while(!endFeast){
             if(this->getId()%2==0){
                 unique_lock<mutex> lock_l(forks[this->getIdLeftFork()].mtx);
                 while(!forks[this->getIdLeftFork()].isReady)
@@ -87,7 +83,6 @@ public:
                 cVariables[getIdRightFork()].notify_one();
             }
             thinking();
-            i++;
         }
     }
     int getId(){return this->id;}
@@ -95,8 +90,20 @@ public:
     int getIdRightFork(){return this->id_right_fork;}
 };
 
+void endProgram(){
+    printw("Press ESC to escape: ");
+    do{
+        if(getch()==27){
+            endFeast=true;
+            break;
+        }
+    }while(true);
+
+}
+
 
 int main(int argc, char* argv[]){
+    initscr();
     cout<<"SO2 Projekt - Problem ucztujących filozofów" <<endl;
     cout<<"Karol Kulawiec 241281"<< endl<<endl;
 
@@ -123,12 +130,13 @@ int main(int argc, char* argv[]){
         threads.push_back(thread(&Philosopher::feast, &philosophers[i], ref(forks), ref(cVariables)));
     }
 
+    threads.push_back(thread(endProgram));
 
     for(thread &thd : threads){
         thd.join();
     }
 
-
+    endwin();
     return 0;
 }
 
