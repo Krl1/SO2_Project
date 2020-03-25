@@ -11,18 +11,14 @@
 #include <semaphore.h>
 #include <cstddef>
 #include <mutex>
-#include <curses.h>
+#include <condition_variable>
 
 using namespace std;
 
-class Fork{
-    mutex * mtx;
-public:
-    Fork(int id): id(id){
-        mtx = new mutex();
-    }
-    int id;
-    bool isDirty = 1;
+struct Fork{
+    Fork(){};
+    bool isReady = true;
+    mutex mtx;
 };
 
 class Philosopher{
@@ -32,48 +28,101 @@ class Philosopher{
 
 public:
     Philosopher(int id, int id_left_fork, int id_right_fork) : id(id), id_left_fork(id_left_fork), id_right_fork(id_right_fork){}
-    void thinking(){}
-    void eating(){}
-    void initialConditions(vector<Fork> forks){
-        if(this->id == 0){
+    void eating(){
+        cout<<"Philosopher nr: "<<this->getId()<<" start eat."<<endl;
+        srand (time(nullptr));
+        int eatingTime = 2500 + rand()%1000;
+        this_thread::sleep_for (chrono::milliseconds (eatingTime));
+        cout<<"Philosopher nr: "<<this->id<<" stop eat."<<endl;
+    }
+    void thinking(){
+        cout<<"Philosopher nr: "<<this->getId()<<" start think."<<endl;
+        srand (time(nullptr));
+        int thinkingTime = 2500 + rand()%1000;
+        this_thread::sleep_for (chrono::milliseconds (thinkingTime));
+        cout<<"Philosopher nr: "<<this->id<<" stop think."<<endl;
+    }
 
+    void feast(vector<Fork> &forks, vector<condition_variable> &cVariables){
+        int i=0;
+        while(i<1000){
+            if(this->getId()%2==0){
+                unique_lock<mutex> lock_l(forks[this->getIdLeftFork()].mtx);
+                while(!forks[this->getIdLeftFork()].isReady)
+                {
+                    cVariables[this->getIdLeftFork()].wait(lock_l);
+                }
+                forks[this->getIdLeftFork()].isReady = false;
+                unique_lock<mutex> lock_r(forks[this->getIdRightFork()].mtx);
+                while(!forks[this->getIdRightFork()].isReady)
+                {
+                    cVariables[this->getIdRightFork()].wait(lock_r);
+                }
+                forks[this->getIdRightFork()].isReady = false;
+                this->eating();
+            }else{
+                unique_lock<mutex> lock_r(forks[this->getIdRightFork()].mtx);
+                while(!forks[this->getIdRightFork()].isReady)
+                {
+                    cVariables[this->getIdRightFork()].wait(lock_r);
+                }
+                forks[this->getIdRightFork()].isReady = false;
+                unique_lock<mutex> lock_l(forks[this->getIdLeftFork()].mtx);
+                while(!forks[this->getIdLeftFork()].isReady)
+                {
+                    cVariables[this->getIdLeftFork()].wait(lock_l);
+                }
+                forks[this->getIdLeftFork()].isReady = false;
+                this->eating();
+            }
+            if(this->getId()%2==0){
+                forks[this->getIdRightFork()].isReady = true;
+                cVariables[getIdRightFork()].notify_one();
+                forks[this->getIdLeftFork()].isReady = true;
+                cVariables[getIdLeftFork()].notify_one();
+            }else{
+                forks[this->getIdLeftFork()].isReady = true;
+                cVariables[getIdLeftFork()].notify_one();
+                forks[this->getIdRightFork()].isReady = true;
+                cVariables[getIdRightFork()].notify_one();
+            }
+            thinking();
+            i++;
         }
     }
-    void feast(vector<Fork> forks){
-        this->initialConditions(forks);
-        while(true){
-            cout<<this->id<<endl;
-            this_thread::sleep_for(chrono::seconds (1));
-        }
-    }
+    int getId(){return this->id;}
+    int getIdLeftFork(){return this->id_left_fork;}
+    int getIdRightFork(){return this->id_right_fork;}
 };
 
-//vector<Fork> forks(10);
 
 int main(int argc, char* argv[]){
     cout<<"SO2 Projekt - Problem ucztujących filozofów" <<endl;
     cout<<"Karol Kulawiec 241281"<< endl<<endl;
 
-    int numberOfphilosophers = 0;
+    int numberOfPhilosophers = 0;
     if (argc > 1){
-        numberOfphilosophers = stoi(argv[1]);
-        cout << "Liczba filozofów: " << numberOfphilosophers << endl;
+        numberOfPhilosophers = stoi(argv[1]);
+        cout << "Liczba filozofów: " << numberOfPhilosophers << endl;
     } else{
         cout<<"Nie podano liczby filozofów!"<<endl;
         return 0;
     }
 
     vector<Philosopher> philosophers;
-    thread threads[numberOfphilosophers];
-    vector<Fork> forks;
-    for(int i=0; i<numberOfphilosophers; i++){
-        forks.push_back(Fork(i));
+    vector<thread> threads;
+    vector<Fork> forks(numberOfPhilosophers);
+    vector<condition_variable> cVariables(numberOfPhilosophers);
+
+
+    for(int i=0; i<numberOfPhilosophers; i++){
+        philosophers.push_back(Philosopher(i, i, (i+1)%numberOfPhilosophers));
     }
 
-    for(int i=0; i<numberOfphilosophers; i++){
-        philosophers.push_back(Philosopher(i, i, (i+1)%numberOfphilosophers));
-        threads[i] = thread(&Philosopher::feast, &philosophers[i], ref(forks));
+    for(int i=0; i<numberOfPhilosophers; i++){
+        threads.push_back(thread(&Philosopher::feast, &philosophers[i], ref(forks), ref(cVariables)));
     }
+
 
     for(thread &thd : threads){
         thd.join();
