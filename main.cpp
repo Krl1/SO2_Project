@@ -11,11 +11,15 @@
 using namespace std;
 
 bool endFeast = false;
+int height=40, width=82, start_y=5, start_x=5;
+mutex mtx_writing_in_box;
+WINDOW * win;
 
 struct Fork{
     Fork(){};
     bool isReady = true;
     mutex mtx;
+    int owner;
 };
 
 class Philosopher{
@@ -23,21 +27,48 @@ class Philosopher{
     int id_left_fork;
     int id_right_fork;
 
+    WINDOW * win_eating;
+    WINDOW * win_thinking;
+
 public:
-    Philosopher(int id, int id_left_fork, int id_right_fork) : id(id), id_left_fork(id_left_fork), id_right_fork(id_right_fork){}
+    Philosopher(int id, int id_left_fork, int id_right_fork) : id(id), id_left_fork(id_left_fork), id_right_fork(id_right_fork){
+        this->win_eating = newwin(3, 22, 13+3*this->getId(), 35);
+        this->win_thinking = newwin(3, 22, 13+3*this->getId(),60);
+        refresh();
+        box(win_eating, 0,0);
+        box(win_thinking, 0,0);
+        wrefresh(win_eating);
+        wrefresh(win_thinking);
+    }
     void eating(){
-        cout<<"Philosopher nr: "<<this->getId()<<" start eat."<<endl;
+        werase(win_eating);
+        box(win_eating, 0,0);
         srand (time(nullptr));
         int eatingTime = 2500 + rand()%1000;
-        this_thread::sleep_for (chrono::milliseconds (eatingTime));
-        cout<<"Philosopher nr: "<<this->id<<" stop eat."<<endl;
+        eatingTime /= 20;
+        for(int i=0; i<20; i++){
+            this_thread::sleep_for (chrono::milliseconds (eatingTime));
+            {
+                lock_guard<mutex> lock(mtx_writing_in_box);
+                mvwprintw(this->win_eating,1,i+1,"#");
+                wrefresh(this->win_eating);
+            }
+        }
     }
     void thinking(){
-        cout<<"Philosopher nr: "<<this->getId()<<" start think."<<endl;
+        wclear(win_thinking);
+        box(win_thinking, 0,0);
         srand (time(nullptr));
         int thinkingTime = 2500 + rand()%1000;
-        this_thread::sleep_for (chrono::milliseconds (thinkingTime));
-        cout<<"Philosopher nr: "<<this->id<<" stop think."<<endl;
+        thinkingTime /= 20;
+        for(int i=0; i<20; i++){
+            this_thread::sleep_for (chrono::milliseconds (thinkingTime));
+            {
+                lock_guard<mutex> lock(mtx_writing_in_box);
+                mvwprintw(this->win_thinking,1,i+1,"#");
+                wrefresh(this->win_thinking);
+            }
+        }
     }
 
     void feast(vector<Fork> &forks, vector<condition_variable> &cVariables){
@@ -91,41 +122,53 @@ public:
 };
 
 void endProgram(){
-    printw("Press ESC to escape: ");
+    noecho();
+
+    mvwprintw(win,height-3,1,"Press 'q' to escape.");
+
+    wrefresh(win);
     do{
-        if(getch()==27){
+        if(getch()==113){
+
+        	mvwprintw(win, height-2,1,"Program is ending. Please wait a few secounds.");
+            wrefresh(win);
             endFeast=true;
             break;
         }
-    }while(true);
 
+    }while(true);
 }
 
 
 int main(int argc, char* argv[]){
-    initscr();
-    cout<<"SO2 Projekt - Problem ucztujących filozofów" <<endl;
-    cout<<"Karol Kulawiec 241281"<< endl<<endl;
-
     int numberOfPhilosophers = 0;
     if (argc > 1){
         numberOfPhilosophers = stoi(argv[1]);
-        cout << "Liczba filozofów: " << numberOfPhilosophers << endl;
     } else{
-        cout<<"Nie podano liczby filozofów!"<<endl;
+        cout<<("Nie podano liczby filozofów!")<<endl;
+        getch();
         return 0;
     }
-
+    height = 15 + 3*numberOfPhilosophers;
+    initscr();
+    win = newwin(height, width, start_y, start_x);
+    refresh();
+    box(win, 0,0);
+    mvwprintw(win, 1, 1, "SO2 Project - Dining philosophers problem");
+    mvwprintw(win, 2, 1,"Karol Kulawiec 241281");
+    mvwprintw(win, 3,1,"Number of philosophers: %d", numberOfPhilosophers);
+    mvwprintw(win, 6, 5, "Philosopher's number:           Eating                  Thinking");
+    wrefresh(win);
     vector<Philosopher> philosophers;
     vector<thread> threads;
     vector<Fork> forks(numberOfPhilosophers);
     vector<condition_variable> cVariables(numberOfPhilosophers);
 
-
     for(int i=0; i<numberOfPhilosophers; i++){
         philosophers.push_back(Philosopher(i, i, (i+1)%numberOfPhilosophers));
+        mvwprintw(win, 9+3*i, 15, "%d", i);
     }
-
+    wrefresh(win);
     for(int i=0; i<numberOfPhilosophers; i++){
         threads.push_back(thread(&Philosopher::feast, &philosophers[i], ref(forks), ref(cVariables)));
     }
@@ -136,7 +179,7 @@ int main(int argc, char* argv[]){
         thd.join();
     }
 
+
     endwin();
     return 0;
 }
-
