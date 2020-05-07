@@ -1,0 +1,20 @@
+(1) Nazwa: Supermarket
+
+(2) Dane studenta: Karol Kulawiec 241281
+
+(3) Opis wątków/zasobów:
+Wątki: 
+- klienci (kilkanaście), 
+- pracownicy sklepu (kilka)
+Zasoby: 
+- pieczywo (kilkanaście), 
+- masło (kilka), 
+- dżem (kilka), 
+- wózek (kilka), 
+- koszyk (kilka), 
+- kasa (kilka), 
+- półki na produkty(3).
+
+(4) Krótki opis działania aplikacji:
+Pracownicy - wyciągają produkty z magazynu (jest ich tam nieskończenie wiele), układają je na półkach, obsługują klientów stojących przy kasie oraz odstawiają wózki i koszyki na swoje miejsce. Pracownicy dopiero po obsłużeniu wszystkich klientów stojących przy kasie mogą od niej odejść. Na raz mogą odstawić wszystkie dostępne wózki lub koszyki, ale nie mogę ich mieszać. 
+Klienci – biorą wózek (jeżeli jest dostępny), albo koszyk (jeżeli jest dostępny) albo nic i wchodzą do sklepu. Jeżeli nie mają nic, to kupują jedynie pieczywo, jeżeli mają koszyk, to dodatkowo kupują masło, jeżeli mają wózek, to dodatkowo kupują dżem. Następnie udają się do kasy, gdzie ustawiają się w kolejce. Po dokonaniu zakupów zostawiają (jeżeli posiadają) wózek lub koszyk koło kasy i wychodzą ze sklepu.
