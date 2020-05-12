@@ -19,7 +19,7 @@ using namespace std;
 #define WHITE   4
 
 bool endShopping = false;
-int height=40, width=78, start_y=5, start_x=5;
+int height=80, width=150, start_y=1, start_x=5;
 mutex mtx_writing_in_box;
 WINDOW * win;
 int numberOfClients = 0;
@@ -59,7 +59,7 @@ int main(int argc, char* argv[]){
         getch();
         return 0;
     }
-    height = 15 + 5*numberOfWorkers;
+    height = 13 + 2*numberOfClients;
     initscr();
     if (has_colors() == FALSE) {
         endwin();
@@ -78,21 +78,33 @@ int main(int argc, char* argv[]){
     mvwprintw(win, 2, 1, "Karol Kulawiec 241281");
     mvwprintw(win, 3, 1, "Number of Clients: %d", numberOfClients);
     mvwprintw(win, 4, 1, "Number of Workers: %d", numberOfWorkers);
+    mvwprintw(win, 6, 1, "Client's number:");
+    mvwprintw(win, 6, 75, "Worker's number:");
     wrefresh(win);
     vector<Client> clients;
     vector<Worker> workers;
     vector<thread> threads;
+    vector<condition_variable> cVariablesClients(numberOfClients);
+    vector<condition_variable> cVariablesWorkers(numberOfWorkers);
+
+
+    for(int i=0; i<numberOfClients; i++){
+        clients.push_back(Client(i));
+        mvwprintw(win, 9+2*i, 11, "%d", i);
+    }
+    for(int i=0; i<numberOfWorkers; i++){
+        workers.push_back(Worker(i));
+        mvwprintw(win, 9+2*i, 83, "%d", i);
+    }
+    wrefresh(win);
+    for(int i=0; i<numberOfClients; i++){
+        threads.push_back(thread(&Client::shopping, &clients[i], ref(cVariablesClients)));
+    }
+    for(int i=0; i<numberOfWorkers; i++){
+        threads.push_back(thread(&Worker::working, &workers[i], ref(cVariablesWorkers)));
+    }
 
     threads.push_back(thread(endProgram));
-
-    Worker* worker = new Worker();
-    worker->function();
-
-    Client* client = new Client();
-    client->function();
-
-
-
 
     for(thread &thd : threads){
         thd.join();

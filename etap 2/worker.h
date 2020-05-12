@@ -11,10 +11,13 @@
 using namespace std;
 
 class Worker{
-    int id;
-	string name;   
+    int id;  
 
 public:
-	int amount_of_item;
-	void function();
+	Worker(int);
+	void working(vector<condition_variable> &);
+	void taking_products_from_the_warehouse();
+	void placement_of_products_on_the_shelf();
+	void customer_service_at_the_till();
+	void putting_trolley_or_basket_back();
 };

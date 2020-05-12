@@ -12,9 +12,12 @@ using namespace std;
 
 class Client{
     int id;
-	string name;   
+	int shopping_option;
 
 public:
-	int amount_of_item;
-	void function();
+	Client(int);
+	void shopping(vector<condition_variable> &);
+	void taking_a_trolley_or_basket();
+	void taking_products();
+	void buying();
 };

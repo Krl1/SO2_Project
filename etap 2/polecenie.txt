@@ -4,16 +4,16 @@
 
 (3) Opis wątków/zasobów:
 Wątki: 
-- klienci (kilkanaście), 
-- pracownicy sklepu (kilka)
+- klienci (kilkanaście), client
+- pracownicy sklepu (kilka). worker
 Zasoby: 
-- pieczywo (kilkanaście), 
-- masło (kilka), 
-- dżem (kilka), 
-- wózek (kilka), 
-- koszyk (kilka), 
-- kasa (kilka), 
-- półki na produkty(3).
+- pieczywo (kilkanaście), bread
+- masło (kilka), butter
+- dżem (kilka), jam
+- wózek (kilka), trolley
+- koszyk (kilka), basket
+- kasa (kilka), till
+- półki na produkty (3). shelf
 
 (4) Krótki opis działania aplikacji:
 Pracownicy - wyciągają produkty z magazynu (jest ich tam nieskończenie wiele), układają je na półkach, obsługują klientów stojących przy kasie oraz odstawiają wózki i koszyki na swoje miejsce. Pracownicy dopiero po obsłużeniu wszystkich klientów stojących przy kasie mogą od niej odejść. Na raz mogą odstawić wszystkie dostępne wózki lub koszyki, ale nie mogę ich mieszać. 
