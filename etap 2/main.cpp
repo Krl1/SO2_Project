@@ -7,17 +7,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <ncurses.h>
-
-// #include "global.h"
-// #include "worker.h"
-// #include "client.h"
-// #include "basket.h"
-// #include "bread.h"
-// #include "butter.h"
-// #include "jam.h"
-// #include "shelf.h"
-// #include "till.h"
-// #include "trolley.h"
+#include <algorithm>
 
 using namespace std;
 
@@ -28,7 +18,7 @@ using namespace std;
 
 mutex mtx_writing_in_box;
 mutex mtx_basket_trolley;
-mutex mtx_shelf_breads, mtx_shelf_butters, mtx_shelf_jams;
+mutex mtx_shelf_breads, mtx_shelf_butters, mtx_shelf_jams, mtx_trolleys, mtx_baskets, mtx_future, mtx_baskets_used, mtx_trolleys_used, mtx_tills, mtx_finished_clients;
 
 
 bool endShopping = false, shoppingIsOver = false;
@@ -38,11 +28,18 @@ WINDOW * win;
 
 int numberOfClients = 0;
 int numberOfWorkers = 0;
-int numberOfBaskets = 0;
+
 int numberOfBreads = 0;
 int numberOfButters = 0;
 int numberOfJams = 0;
+
+int numberOfBreadsFuture = 0;
+int numberOfButtersFuture = 0;
+int numberOfJamsFuture = 0;
+
 int numberOfTills = 0;
+
+int numberOfBaskets = 0;
 int numberOfTrolleys = 0;
 
 
@@ -69,7 +66,10 @@ struct Shelf{
 
 struct Till{
     Till(){};
+    vector <int> clients_id;
     int id;
+    bool used = false;
+    int worker_id;
 };
 
 struct Trolley{
@@ -90,7 +90,7 @@ struct Client{
 
     Client(int i){
         id=i;
-        shopping_option=0;
+        shopping_option=i%3 +1;
 
         win_c = newwin(5, 22, 3+5*this->getId(), 21);
         win_so = newwin(3, 3, 3+5*this->getId()+1, 14);
@@ -99,35 +99,16 @@ struct Client{
         wrefresh(win_c);
     }
 
-    void shopping(vector<condition_variable> &cVariablesShelves, 
-        vector<condition_variable> &cVariables, vector<Basket> &baskets, 
-        vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams, 
-        vector<Till> &tills, vector<Trolley> &trolleys){
+    void shopping(vector<condition_variable> &cVariablesShelves, vector<condition_variable> &cVariablesClients, vector<condition_variable> &cVariablesWorkers, vector<condition_variable> &cVariablesCarriage, vector<Basket> &baskets, vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams, vector<Till> &tills, vector<Trolley> &trolleys, vector<Basket> &basketsUsed, vector<Trolley> &trolleysUsed, vector<bool> &finishedClients){
         while(!endShopping){
-            taking_a_trolley_or_basket(ref(baskets), ref(trolleys));
-            taking_products(ref(cVariablesShelves), ref(breads), 
-                ref(butters), ref(jams));
-            buying(ref(baskets), ref(trolleys));
+            taking_a_trolley_or_basket(ref(baskets), ref(trolleys), ref(cVariablesCarriage));
+            taking_products(ref(cVariablesShelves), ref(breads), ref(butters), ref(jams));
+            buying(ref(baskets), ref(trolleys), ref(cVariablesCarriage), ref(basketsUsed), ref(trolleysUsed), ref(tills), ref(cVariablesClients), ref(cVariablesWorkers), ref(finishedClients));
             shoppingBreak();
         }
-        shoppingIsOver = true;
     }   
 
-    void taking_a_trolley_or_basket(vector<Basket> &baskets, 
-        vector<Trolley> &trolleys){
-        {
-            lock_guard<mutex> lock(mtx_basket_trolley);
-            if(trolleys.size() > 0){
-                this->shopping_option = 3;
-                trolleys.erase(trolleys.begin());
-            } 
-            else if(baskets.size() > 0){
-                this->shopping_option = 2;
-                baskets.erase(baskets.begin());
-            } else {
-                this->shopping_option = 1;
-            }
-        }
+    void taking_a_trolley_or_basket(vector<Basket> &baskets, vector<Trolley> &trolleys, vector<condition_variable> &cVariablesCarriage){
         werase(win_so);
         box(win_so, 0,0);
         {
@@ -136,12 +117,32 @@ struct Client{
             wrefresh(this->win_so);
         }
         
-
         werase(win_c);
         box(win_c, 0,0);
         srand (time(nullptr));
         int time = 1000 + rand()%500;
         time /= 20;
+
+        if(shopping_option==3){
+            {
+                unique_lock<mutex> lock_trolleys(mtx_trolleys);
+                while(trolleys.size()==0)
+                {
+                    cVariablesCarriage[2].wait(lock_trolleys);
+                }
+                trolleys.erase(trolleys.begin());
+            } 
+        }
+        else if(shopping_option==2){
+            {
+                unique_lock<mutex> lock_baskets(mtx_baskets);
+                while(baskets.size()==0)
+                {
+                    cVariablesCarriage[0].wait(lock_baskets);
+                }
+                baskets.erase(baskets.begin());
+            } 
+        }
         for(int i=0; i<20; i++){
             this_thread::sleep_for (chrono::milliseconds (time));
             {
@@ -152,8 +153,7 @@ struct Client{
         }
     }
 
-    void taking_products(vector<condition_variable> &cVariablesShelves, 
-        vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams){
+    void taking_products(vector<condition_variable> &cVariablesShelves, vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams){
         werase(win_c);
         box(win_c, 0,0);
         srand (time(nullptr));
@@ -268,12 +268,31 @@ struct Client{
         }
     }
 
-    void buying(vector<Basket> &baskets, vector<Trolley> &trolleys){
+    void buying(vector<Basket> &baskets, vector<Trolley> &trolleys, vector<condition_variable> &cVariablesCarriage, vector<Basket> &basketsUsed, vector<Trolley> &trolleysUsed, vector<Till> &tills, vector<condition_variable> &cVariablesClients, vector<condition_variable> &cVariablesWorkers, vector<bool> &finishedClients){
+
+        {
+            lock_guard<mutex> lock_finished(mtx_finished_clients);
+            finishedClients[id] = false;
+        }
         werase(win_c);
         box(win_c, 0,0);
         srand (time(nullptr));
         int time = 1000*shopping_option + rand()%500;
         time /= 20;
+
+        int no_till = id%(numberOfWorkers/2); 
+        {
+            lock_guard<mutex> lock_till(mtx_tills);
+            tills[no_till].clients_id.push_back(id);
+        }
+        {
+            unique_lock<mutex> lock_till(mtx_tills);
+            while(std::count(tills[no_till].clients_id.begin(), tills[no_till].clients_id.end(), id)){
+                cVariablesClients[id].wait(lock_till);
+            }
+        }
+
+
         for(int i=0; i<20; i++){
             this_thread::sleep_for (chrono::milliseconds (time));
             {
@@ -282,21 +301,35 @@ struct Client{
                 wrefresh(this->win_c);
             }
         }
+        {
+            lock_guard<mutex> lock_finished(mtx_finished_clients);
+            finishedClients[id]=true;
+        }
+        
+        cVariablesWorkers[tills[no_till].worker_id].notify_one();
+
         if(shopping_option==3)
         {
-            lock_guard<mutex> lock(mtx_basket_trolley);
-            trolleys.push_back(Trolley());
+            {
+                lock_guard<mutex> lock(mtx_trolleys_used);
+                trolleysUsed.push_back(Trolley());
+            }
         }
         else if(shopping_option==2)
         {
-            lock_guard<mutex> lock(mtx_basket_trolley);
-            baskets.push_back(Basket());
+            {
+                lock_guard<mutex> lock(mtx_baskets_used);
+                basketsUsed.push_back(Basket());
+            }
         }
         werase(win_so);
         box(win_so, 0,0);
     }
 
-    void shoppingBreak(){this_thread::sleep_for (chrono::milliseconds (1000));}
+    void shoppingBreak(){
+        this_thread::sleep_for (chrono::milliseconds (1000));
+        shopping_option = rand()%3 + 1;
+    }
 
     int getId(){ return id;}
     
@@ -309,6 +342,7 @@ struct Client{
 
 struct Worker{
     int id;
+    int item;
     WINDOW * win_w;
 
     Worker(int i){
@@ -319,15 +353,13 @@ struct Worker{
         wrefresh(win_w);
     }
 
-    void working(vector<condition_variable> &cVariablesShelves, 
-        vector<condition_variable> &cVariables, vector<Basket> &baskets, 
-        vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams, 
-        vector<Till> &tills, vector<Trolley> &trolleys){
-        while(!endShopping){
+    void working(vector<condition_variable> &cVariablesShelves, vector<condition_variable> &cVariablesClients, vector<condition_variable> &cVariablesWorkers, vector<condition_variable> &cVariablesCarriage,  vector<Basket> &baskets, vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams, vector<Till> &tills, vector<Trolley> &trolleys, vector<Basket> &basketsUsed, vector<Trolley> &trolleysUsed, vector<bool> &finishedClients){
+        this_thread::sleep_for (chrono::milliseconds (5000));
+        while(!shoppingIsOver){
             taking_products_from_the_warehouse();
-            placement_of_products_on_the_shelf();
-            customer_service_at_the_till();
-            putting_trolley_or_basket_back();
+            placement_of_products_on_the_shelf(ref(cVariablesShelves),ref(breads), ref(butters), ref(jams));
+            customer_service_at_the_till(ref(cVariablesClients), ref(cVariablesWorkers), ref(tills), ref(finishedClients));
+            putting_trolley_or_basket_back(ref(cVariablesCarriage), ref(baskets), ref(trolleys), ref(basketsUsed), ref(trolleysUsed));
         }
     }
 
@@ -347,39 +379,194 @@ struct Worker{
         }
     }
     
-    void placement_of_products_on_the_shelf(){
-        werase(win_w);
-        box(win_w, 0,0);
-        srand (time(nullptr));
-        int shelfTime = 1000 + rand()%500;
-        shelfTime /= 20;
-        for(int i=0; i<20; i++){
-            this_thread::sleep_for (chrono::milliseconds (shelfTime));
-            {
-                lock_guard<mutex> lock(mtx_writing_in_box);
-                mvwprintw(this->win_w,2,i+1,"#");
-                wrefresh(this->win_w);
+    void placement_of_products_on_the_shelf(vector<condition_variable> &cVariablesShelves, vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams){
+        {
+            lock_guard<mutex> lock_br(mtx_shelf_breads);
+            lock_guard<mutex> lock_bu(mtx_shelf_butters);
+            lock_guard<mutex> lock_ja(mtx_shelf_jams);
+            numberOfBreadsFuture=breads.size();
+            numberOfButtersFuture=butters.size();
+            numberOfJamsFuture=jams.size();
+
+            if(numberOfBreadsFuture*2<numberOfButtersFuture*3){
+                if(numberOfBreadsFuture*3<numberOfJamsFuture*6){
+                    //pracownik bierze chleb numberOfClients*3/4
+                    item=1;
+                    numberOfBreadsFuture = breads.size() + numberOfBreads/2;
+                    if(numberOfBreadsFuture>numberOfBreads)
+                        numberOfBreadsFuture=numberOfBreads;
+                }
+                else{
+                    //pracownik bierze dzem numberOfClients/4
+                    item=3;
+                    numberOfJamsFuture = jams.size() + numberOfJams/2;
+                    if(numberOfJamsFuture>numberOfJams)
+                        numberOfJamsFuture=numberOfJams;
+                }
             }
+            else if(numberOfJamsFuture*6<numberOfButtersFuture*3){
+                //pracownik bierze dzem numberOfClients/4
+                item=3;
+                numberOfJamsFuture = jams.size() + numberOfJams/2;
+                if(numberOfJamsFuture>numberOfJams) 
+                    numberOfJamsFuture=numberOfJams;
+            }
+            else{
+                //pracownik bierze maslo numberOfClients/2
+                item=2;
+                numberOfButtersFuture = butters.size() + numberOfButters/2;
+                    if(numberOfButtersFuture>numberOfButters)
+                        numberOfButtersFuture=numberOfButters;
+            }
+        }
+        if(item==1){
+            {
+                lock_guard<mutex> lock_breads(mtx_shelf_breads);
+                werase(win_w);
+                box(win_w, 0,0);
+                srand (time(nullptr));
+                int shelfTime = 1000 + rand()%500;
+                shelfTime /= 20;
+                for(int i=0; i<20; i++){
+                    this_thread::sleep_for (chrono::milliseconds (shelfTime));
+                    {
+                        lock_guard<mutex> lock(mtx_writing_in_box);
+                        mvwprintw(this->win_w,2,i+1,"#");
+                        wrefresh(this->win_w);
+                    }
+                }
+                while(breads.size()<numberOfBreadsFuture){
+                    breads.push_back(Bread());
+                }
+
+            }
+            cVariablesShelves[0].notify_one();
+        }
+        else if(item==2){
+            {
+                lock_guard<mutex> lock_butters(mtx_shelf_butters);
+                werase(win_w);
+                box(win_w, 0,0);
+                srand (time(nullptr));
+                int shelfTime = 1000 + rand()%500;
+                shelfTime /= 20;
+                for(int i=0; i<20; i++){
+                    this_thread::sleep_for (chrono::milliseconds (shelfTime));
+                    {
+                        lock_guard<mutex> lock(mtx_writing_in_box);
+                        mvwprintw(this->win_w,2,i+1,"#");
+                        wrefresh(this->win_w);
+                    }
+                }
+                while(butters.size()<numberOfButtersFuture){
+                    butters.push_back(Butter());
+                }
+
+            }
+            cVariablesShelves[1].notify_one();
+        }
+        else if(item==3){
+            {
+                lock_guard<mutex> lock_jams(mtx_shelf_jams);
+                werase(win_w);
+                box(win_w, 0,0);
+                srand (time(nullptr));
+                int shelfTime = 1000 + rand()%500;
+                shelfTime /= 20;
+                for(int i=0; i<20; i++){
+                    this_thread::sleep_for (chrono::milliseconds (shelfTime));
+                    {
+                        lock_guard<mutex> lock(mtx_writing_in_box);
+                        mvwprintw(this->win_w,2,i+1,"#");
+                        wrefresh(this->win_w);
+                    }
+                }
+                while(jams.size()<numberOfJamsFuture){
+                    jams.push_back(Jam());
+                }
+
+            }
+            cVariablesShelves[2].notify_one();
         }
     }
     
-    void customer_service_at_the_till(){
+    void customer_service_at_the_till(vector<condition_variable> &cVariablesClients, vector<condition_variable> &cVariablesWorkers, vector<Till> &tills, vector<bool> &finishedClients){
         werase(win_w);
         box(win_w, 0,0);
-        srand (time(nullptr));
-        int tillTime = 1000 + rand()%500;
-        tillTime /= 20;
-        for(int i=0; i<20; i++){
-            this_thread::sleep_for (chrono::milliseconds (tillTime));
+        {
+            lock_guard<mutex> lock(mtx_writing_in_box);
+            wrefresh(this->win_w);
+        }
+        int no_till = id%(numberOfWorkers/2); 
+        {
+            lock_guard<mutex> lock_till(mtx_tills);
+            if(!tills[no_till].used){
+                tills[no_till].used = true;
+                tills[no_till].worker_id = id;
+            }
+            else{
+                return;
+            }
+        }
+        bool tillIsEmpty; 
+        
+        {
+            lock_guard<mutex> lock(mtx_tills);
+            tillIsEmpty = tills[no_till].clients_id.empty(); 
+        }
+        
+        while(!tillIsEmpty){
+            int client_id;
+            {
+                lock_guard<mutex> lock_till(mtx_tills);
+                client_id = tills[no_till].clients_id.front();
+                tills[no_till].clients_id.erase(tills[no_till].clients_id.begin());
+            }
             {
                 lock_guard<mutex> lock(mtx_writing_in_box);
-                mvwprintw(this->win_w,3,i+1,"#");
+                mvwprintw(this->win_w,3,1,"WORKING WITH %1d", client_id);
                 wrefresh(this->win_w);
             }
+            cVariablesClients[client_id].notify_one();
+
+            {
+                unique_lock<mutex> lock_finished(mtx_finished_clients);
+                while(!finishedClients[client_id]){
+                    cVariablesWorkers[id].wait(lock_finished);
+                }
+            }
+
+
+            {
+                lock_guard<mutex> lock_till(mtx_tills);
+                tillIsEmpty = tills[no_till].clients_id.empty();  
+            }
+        }
+
+
+        {
+            lock_guard<mutex> lock_till(mtx_tills);
+            tills[no_till].used = false;
         }
     }
     
-    void putting_trolley_or_basket_back(){
+    void putting_trolley_or_basket_back(vector<condition_variable> &cVariablesCarriage, vector<Basket> &baskets, vector<Trolley> &trolleys, vector<Basket> &basketsUsed, vector<Trolley> &trolleysUsed){
+        int option = 1;
+        int count = 0;
+        {
+            lock_guard<mutex> lock_b(mtx_baskets_used);
+            lock_guard<mutex> lock_t(mtx_trolleys_used);
+
+            if(basketsUsed.size() > trolleysUsed.size()){
+                option = 0;
+                count = basketsUsed.size();
+                basketsUsed.clear();
+            }
+            else{
+                count = trolleysUsed.size();
+                trolleysUsed.clear();
+            }
+        }
         werase(win_w);
         box(win_w, 0,0);
         srand (time(nullptr));
@@ -392,6 +579,28 @@ struct Worker{
                 mvwprintw(this->win_w,4,i+1,"#");
                 wrefresh(this->win_w);
             }
+        }
+        if(option==1){
+            {
+                lock_guard<mutex> lock(mtx_trolleys);
+                int i=0;
+                while(i<count){
+                    trolleys.push_back(Trolley());
+                    i++;
+                }
+            }
+            cVariablesCarriage[2].notify_all();
+        }
+        else{
+            {
+                lock_guard<mutex> lock(mtx_baskets);
+                int i=0;
+                while(i<count){
+                    baskets.push_back(Basket());
+                    i++;
+                }   
+            }
+            cVariablesCarriage[0].notify_all();
         }
     }
 
@@ -423,9 +632,7 @@ void endProgram(){
     }while(true);
 }
 
-void shelvesBaskedTrolleyCondition(vector<Basket> &baskets, vector<Bread> &breads, 
-    vector<Butter> &butters, vector<Jam> &jams, vector<Till> &tills, 
-    vector<Trolley> &trolleys){
+void shelvesBaskedTrolleyCondition(vector<Basket> &baskets, vector<Bread> &breads, vector<Butter> &butters, vector<Jam> &jams, vector<Till> &tills, vector<Trolley> &trolleys){
     while(!shoppingIsOver){
         {
             lock_guard<mutex> lock(mtx_writing_in_box);
@@ -439,6 +646,43 @@ void shelvesBaskedTrolleyCondition(vector<Basket> &baskets, vector<Bread> &bread
             wrefresh(win);
         }
     }      
+}
+
+void usedTills(vector<Till> &tills, int numberOfTills){
+    while(!shoppingIsOver){
+        {
+            lock_guard<mutex> lock(mtx_writing_in_box);
+            for(int i=0; i<numberOfTills; i++){
+                if(tills[i].used)
+                    mvwprintw(win, height-13+i, width-46, "Used till %1d? Yes", i);
+                else
+                    mvwprintw(win, height-13+i, width-46, "Used till %1d?  No", i);
+
+            }
+            wrefresh(win);
+        }
+    }
+}
+
+void finishedClientsPrint(vector<bool> &finishedClients, vector<Till> &tills){
+    while(!shoppingIsOver){
+        {
+            lock_guard<mutex> lock(mtx_writing_in_box);
+            {
+                lock_guard<mutex> lock_tills(mtx_tills);
+                int no_tills=0;
+                for(Till &till :tills){
+                    mvwprintw(win, height-11+no_tills, width-46, "Till %d:           ", no_tills);
+                    for(int i=0; i<till.clients_id.size(); i++){
+                        mvwprintw(win, height-11+no_tills, width-38+2*i, "%d", till.clients_id[i]);
+                    }
+                    no_tills++;
+                }
+
+            }
+            wrefresh(win);
+        }
+    }
 }
 
 int main(int argc, char* argv[]){
@@ -471,15 +715,22 @@ int main(int argc, char* argv[]){
     mvwprintw(win, height-4, width-26, "Karol Kulawiec 241281");
     mvwprintw(win, height-3, width-26, "Number of Clients: %d", numberOfClients);
     mvwprintw(win, height-2, width-26, "Number of Workers: %d", numberOfWorkers);
-    mvwprintw(win, 1, 1, "Client's number:");
+    mvwprintw(win, 1, 1, "Client's | Shopping");
+    mvwprintw(win, 2, 1, "number:  | option:");
     mvwprintw(win, 1, 45, "Worker's number:");
     wrefresh(win);
     vector<Client> clients;
     vector<Worker> workers;
+    vector<thread> threadsC;
     vector<thread> threads;
     vector<condition_variable> cVariablesClients(numberOfClients);
+    vector<bool> finishedClients(numberOfClients);
     vector<condition_variable> cVariablesWorkers(numberOfWorkers);
     vector<condition_variable> cVariablesShelves(3);
+    vector<condition_variable> cVariablesCarriage(4); //0-Baskets, 1-BasketsUsed, 2-Trolley, 3-TrolleyUsed
+
+    condition_variable cVariablesTrolley;
+    condition_variable cVariablesBaskets;
 
     numberOfBaskets = numberOfClients/3;
     numberOfBreads = (numberOfClients*3)/2;
@@ -489,17 +740,21 @@ int main(int argc, char* argv[]){
     numberOfTrolleys = numberOfClients/3;
 
     vector<Shelf> shelves(3);
-    vector<Basket> baskets(numberOfBaskets);
+    vector<Till> tills(numberOfTills);
+
     vector<Bread> breads(numberOfBreads);
     vector<Butter> butters(numberOfButters);
     vector<Jam> jams(numberOfJams);
-    vector<Till> tills(numberOfTills);
+    
+    vector<Basket> baskets(numberOfBaskets);
+    vector<Basket> basketsUsed;
     vector<Trolley> trolleys(numberOfTrolleys);
-
+    vector<Trolley> trolleysUsed;
 
     for(int i=0; i<numberOfClients; i++){
         clients.push_back(Client(i));
-        mvwprintw(win, 4+5*i, 9, "%d", i);
+        mvwprintw(win, 4+5*i, 6, "%d", i);
+        finishedClients[i]=true;
     }
     for(int i=0; i<numberOfWorkers; i++){
         workers.push_back(Worker(i));
@@ -507,20 +762,21 @@ int main(int argc, char* argv[]){
     }
     wrefresh(win);
     for(int i=0; i<numberOfClients; i++){
-        threads.push_back(thread(&Client::shopping, &clients[i], 
-            ref(cVariablesShelves), ref(cVariablesClients), ref(baskets), 
-            ref(breads), ref(butters), ref(jams), ref(tills), ref(trolleys)));
+        threadsC.push_back(thread(&Client::shopping, &clients[i], ref(cVariablesShelves), ref(cVariablesClients), ref(cVariablesWorkers), ref(cVariablesCarriage), ref(baskets), ref(breads), ref(butters), ref(jams), ref(tills), ref(trolleys), ref(basketsUsed), ref(trolleysUsed), ref(finishedClients)));
     }
     for(int i=0; i<numberOfWorkers; i++){
-        threads.push_back(thread(&Worker::working, &workers[i], 
-            ref(cVariablesShelves), ref(cVariablesWorkers), ref(baskets), 
-            ref(breads), ref(butters), ref(jams), ref(tills), ref(trolleys)));
+        threads.push_back(thread(&Worker::working, &workers[i], ref(cVariablesShelves), ref(cVariablesClients), ref(cVariablesWorkers), ref(cVariablesCarriage), ref(baskets), ref(breads), ref(butters), ref(jams), ref(tills), ref(trolleys), ref(basketsUsed), ref(trolleysUsed), ref(finishedClients)));
     }
 
     threads.push_back(thread(endProgram));
-    threads.push_back(thread(shelvesBaskedTrolleyCondition, ref(baskets), 
-        ref(breads), ref(butters), ref(jams), ref(tills), ref(trolleys)));
+    threads.push_back(thread(shelvesBaskedTrolleyCondition, ref(baskets), ref(breads), ref(butters), ref(jams), ref(tills), ref(trolleys)));
+    threads.push_back(thread(usedTills, ref(tills), ref(numberOfTills)));
+    threads.push_back(thread(finishedClientsPrint, ref(finishedClients),ref(tills)));
 
+    for(thread &thd : threadsC){
+        thd.join();
+    }
+    shoppingIsOver = true;
     for(thread &thd : threads){
         thd.join();
     }
